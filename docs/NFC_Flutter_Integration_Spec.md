@@ -1,5 +1,17 @@
 # NFC 商家優惠券功能 — Flutter 開發規格說明書
 
+> ⚠️ **本文件的 API 路徑已過時（2026-10-11 註記）**：後端已把 NFC 模組改成 QR Code，並接上 JWT 登入，
+> `au_id`／`s_id` 不再由 request 帶入，改從 `Authorization: Bearer {token}` 取得。目前的 API：
+>
+> | 功能 | API | 身分 |
+> |---|---|---|
+> | 登入 | `POST /api/Auth/Login`（`auth_name`、`auth_pswd`） | 不用 |
+> | 商家綁定 | `POST /api/merchant/qrcode/bind`（`qr_uid`、`coupon_id`） | 商家 Token |
+> | 掃描查詢 | `GET /api/qrcode/scan/{qrUid}` | 不用；帶遊客 Token 時會同時領取 |
+> | 核銷 | `POST /api/coupons/{couponId}/redeem`（不用 body） | 登入 Token |
+>
+> 回應格式（`Result` 內容）與下文相同。正式後端與 Swagger：<https://backend.angelalala.com/>
+
 > **Version:** 1.1.0（2026-09-21 更新：`merchant_place` 擴充為完整景點詳情，見第四節）
 > **Date:** 2026-09-20
 > **對象：** Flutter App 開發人員（使用者端 App／商家端 App）

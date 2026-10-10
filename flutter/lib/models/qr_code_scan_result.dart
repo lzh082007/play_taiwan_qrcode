@@ -1,10 +1,9 @@
 import 'coupon.dart';
 import 'merchant_place.dart';
 
-/// `GET /api/nfc/scan/{nfcUid}` 的回應內容，見
-/// docs/NFC_Flutter_Integration_Spec.md 第四節。
-class NfcScanResult {
-  const NfcScanResult({required this.coupon, required this.merchantPlace, required this.isNewlyClaimed});
+/// `GET /api/qrcode/scan/{qrUid}` 的回應內容。
+class QrCodeScanResult {
+  const QrCodeScanResult({required this.coupon, required this.merchantPlace, required this.isNewlyClaimed});
 
   final Coupon coupon;
 
@@ -13,12 +12,12 @@ class NfcScanResult {
   final MerchantPlace? merchantPlace;
 
   /// 這次呼叫是不是第一次幫這個使用者登記領取這張優惠券。
-  /// 沒有帶 auId 查詢時固定是 false。
+  /// 沒有以遊客帳號登入（或用訪客模式查詢）時固定是 false。
   final bool isNewlyClaimed;
 
-  factory NfcScanResult.fromJson(Map<String, dynamic> json) {
+  factory QrCodeScanResult.fromJson(Map<String, dynamic> json) {
     final merchantPlaceJson = json['merchant_place'] as Map<String, dynamic>?;
-    return NfcScanResult(
+    return QrCodeScanResult(
       coupon: Coupon.fromJson(json['coupon'] as Map<String, dynamic>),
       merchantPlace: merchantPlaceJson == null ? null : MerchantPlace.fromJson(merchantPlaceJson),
       isNewlyClaimed: json['is_newly_claimed'] as bool,

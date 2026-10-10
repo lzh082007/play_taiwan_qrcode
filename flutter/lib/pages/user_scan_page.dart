@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 
-import '../config/auth_context.dart';
-import '../models/nfc_scan_result.dart';
-import '../repositories/nfc_coupon_repository.dart';
+import '../config/auth_session.dart';
+import '../models/qr_code_scan_result.dart';
+import '../repositories/coupon_repository.dart';
 import '../services/nfc_service.dart';
 import '../services/qr_service.dart';
 import '../widgets/coupon_card.dart';
@@ -23,9 +23,12 @@ class ScanLoading extends ScanResultState {
 }
 
 class ScanSuccess extends ScanResultState {
-  const ScanSuccess({required this.code, required this.result});
+  const ScanSuccess({required this.code, required this.result, required this.asGuest});
   final String code;
-  final NfcScanResult result;
+  final QrCodeScanResult result;
+
+  /// 這次查詢是不是以訪客身分（不帶遊客 Token）送出的；是的話不會領取、也不能核銷。
+  final bool asGuest;
 }
 
 class ScanNotFound extends ScanResultState {
@@ -41,8 +44,9 @@ class ScanError extends ScanResultState {
 
 /// 使用者端：掃描 QR 碼查詢商家/優惠券資訊（功能二），並可核銷優惠券（功能三）。
 ///
-/// 對應 docs/NFC_Flutter_Integration_Spec.md 第四、五節，原本用 NFC 貼紙序號的地方
-/// 換成用相機掃到的 QR 碼內容，後端 API 完全共用。
+/// 對應後端 `GET /api/qrcode/scan/{qrUid}` 與 `POST /api/coupons/{couponId}/redeem`。
+/// NFC 貼紙序號跟相機掃到的 QR 碼內容都當成 qr_uid 查詢，後端 API 完全共用。
+/// 以遊客帳號登入時，掃描會順便領取優惠券，之後才能核銷。
 class UserScanPage extends StatefulWidget {
   const UserScanPage({super.key});
 
@@ -53,18 +57,22 @@ class UserScanPage extends StatefulWidget {
 class _UserScanPageState extends State<UserScanPage> {
   final _nfcService = NfcService();
   final _qrService = QrService();
-  final _repository = NfcCouponRepository();
+  final _repository = CouponRepository();
 
   ScanResultState _state = const ScanIdle();
   _ScanMethod _scanMethod = _ScanMethod.nfc;
 
-  /// 訪客模式：不帶 auId 查詢，只看內容、不會寫入領取紀錄。
+  /// 訪客模式：不帶 Token 查詢，只看內容、不會寫入領取紀錄。
   bool _guestMode = false;
   bool _isRedeeming = false;
 
   bool get _isScanning => _state is ScanLoading;
 
+  /// 後端只會幫「遊客」帳號領取優惠券，沒登入或用其他身分登入時一律當成訪客查詢。
+  bool get _isTourist => AuthSession.info?.isTourist == true;
+
   Future<void> _startScan() async {
+    final asGuest = _guestMode || !_isTourist;
     setState(() => _state = const ScanLoading());
 
     try {
@@ -77,15 +85,15 @@ class _UserScanPageState extends State<UserScanPage> {
       }
 
       try {
-        final result = await _repository.scanNfc(code, auId: _guestMode ? null : AuthContext.currentAuId);
+        final result = await _repository.scanQrCode(code, asGuest: asGuest);
         if (!mounted) return;
-        setState(() => _state = ScanSuccess(code: code, result: result));
-      } on NfcApiFailure catch (e) {
+        setState(() => _state = ScanSuccess(code: code, result: result, asGuest: asGuest));
+      } on ApiFailure catch (e) {
         if (!mounted) return;
         setState(() {
           _state = e.isNotFound ? ScanNotFound(code: code, message: e.message) : ScanError(message: e.message);
         });
-      } on NfcApiException catch (e) {
+      } on ApiException catch (e) {
         if (!mounted) return;
         setState(() => _state = ScanError(message: e.message));
       }
@@ -106,10 +114,10 @@ class _UserScanPageState extends State<UserScanPage> {
   Future<void> _redeem(int couponId) async {
     setState(() => _isRedeeming = true);
     try {
-      await _repository.redeemCoupon(couponId: couponId, auId: AuthContext.currentAuId);
+      await _repository.redeemCoupon(couponId);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('優惠券核銷成功')));
-    } on NfcApiException catch (e) {
+    } on ApiException catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
     } finally {
@@ -150,12 +158,22 @@ class _UserScanPageState extends State<UserScanPage> {
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 8),
-              SwitchListTile(
-                title: const Text('以訪客身份查詢'),
-                subtitle: const Text('不會自動登記領取優惠券'),
-                value: _guestMode,
-                onChanged: _isScanning ? null : (value) => setState(() => _guestMode = value),
-              ),
+              if (_isTourist)
+                SwitchListTile(
+                  title: const Text('以訪客身份查詢'),
+                  subtitle: const Text('不會自動登記領取優惠券'),
+                  value: _guestMode,
+                  onChanged: _isScanning ? null : (value) => setState(() => _guestMode = value),
+                )
+              else
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: Text(
+                    '目前沒有以遊客帳號登入，只能查看內容；\n回首頁登入遊客帳號後才會領取優惠券、才能核銷。',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 12),
+                  ),
+                ),
               FilledButton.icon(
                 onPressed: _isScanning ? null : _startScan,
                 icon: Icon(_scanMethod == _ScanMethod.nfc ? Icons.nfc : Icons.qr_code_scanner),
@@ -181,7 +199,7 @@ class _UserScanPageState extends State<UserScanPage> {
         padding: EdgeInsets.only(top: 32),
         child: Column(children: [CircularProgressIndicator()]),
       ),
-      ScanSuccess(:final code, :final result) => _buildSuccess(code, result),
+      ScanSuccess(:final code, :final result, :final asGuest) => _buildSuccess(code, result, asGuest: asGuest),
       ScanNotFound(:final code, :final message) => Padding(
         padding: const EdgeInsets.only(top: 32),
         child: Column(
@@ -209,7 +227,7 @@ class _UserScanPageState extends State<UserScanPage> {
     };
   }
 
-  Widget _buildSuccess(String code, NfcScanResult result) {
+  Widget _buildSuccess(String code, QrCodeScanResult result, {required bool asGuest}) {
     final place = result.merchantPlace;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -217,18 +235,23 @@ class _UserScanPageState extends State<UserScanPage> {
         if (place != null) ...[MerchantPlaceCard(place: place), const SizedBox(height: 12)],
         CouponCard(coupon: result.coupon),
         const SizedBox(height: 12),
-        if (!_guestMode)
+        if (!asGuest)
           Text(
             result.isNewlyClaimed ? '已幫你登記領取這張優惠券' : '你之前已經領過這張優惠券了',
             textAlign: TextAlign.center,
           ),
         const SizedBox(height: 12),
         FilledButton.icon(
-          onPressed: _guestMode || _isRedeeming ? null : () => _redeem(result.coupon.couponId),
+          onPressed: asGuest || _isRedeeming ? null : () => _redeem(result.coupon.couponId),
           icon: const Icon(Icons.check_circle_outline),
           label: Text(_isRedeeming ? '核銷中...' : '到店核銷這張優惠券'),
         ),
-        if (_guestMode) const Text('訪客模式無法核銷，請關閉訪客模式後重新掃描', style: TextStyle(fontSize: 12)),
+        if (asGuest)
+          Text(
+            _isTourist ? '訪客模式無法核銷，請關閉訪客模式後重新掃描' : '請先登入遊客帳號再重新掃描，才能領取與核銷',
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 12),
+          ),
         const SizedBox(height: 8),
         Text('掃描到的代碼：$code', style: Theme.of(context).textTheme.bodySmall),
       ],

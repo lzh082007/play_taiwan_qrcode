@@ -6,7 +6,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:uuid/uuid.dart';
 
-import '../repositories/nfc_coupon_repository.dart';
+import '../repositories/coupon_repository.dart';
 import '../services/nfc_service.dart';
 
 enum BindMethod { nfc, qr }
@@ -37,8 +37,9 @@ class BindError extends BindResultState {
 
 /// 商家端：把一個識別碼（NFC 貼紙序號，或 App 產生的 QR 代碼）跟指定的優惠券綁在一起（功能一）。
 ///
-/// 對應 docs/NFC_Flutter_Integration_Spec.md 第三節。優惠券本身要先透過
-/// 商家後台的優惠券 CRUD API 建立好，這裡先讓商家手動輸入 coupon_id。
+/// 對應後端 `POST /api/merchant/qrcode/bind`，需要商家帳號登入（後端從 Token 取得店家代號）。
+/// 優惠券本身要先透過商家後台的優惠券 API 建立好，而且必須是目前登入店家的優惠券，
+/// 這裡先讓商家手動輸入 coupon_id。
 ///
 /// 兩種方式的差異：NFC 貼紙的 UID 是硬體出廠就固定的，只能「掃描既有的」；
 /// QR 碼的內容純粹是軟體產生的字串，所以是 App 端直接產生一組唯一代碼（UUID）
@@ -52,7 +53,7 @@ class MerchantBindPage extends StatefulWidget {
 
 class _MerchantBindPageState extends State<MerchantBindPage> {
   final _nfcService = NfcService();
-  final _repository = NfcCouponRepository();
+  final _repository = CouponRepository();
   final _couponIdController = TextEditingController();
   final _formKey = GlobalKey<FormState>();
   final _qrBoundaryKey = GlobalKey();
@@ -72,10 +73,10 @@ class _MerchantBindPageState extends State<MerchantBindPage> {
       final tagResult = await _nfcService.readOnce();
 
       try {
-        await _repository.bindNfc(nfcUid: tagResult.uidHex, couponId: couponId);
+        await _repository.bindQrCode(qrUid: tagResult.uidHex, couponId: couponId);
         if (!mounted) return;
         setState(() => _state = BindSuccess(method: BindMethod.nfc, code: tagResult.uidHex, couponId: couponId));
-      } on NfcApiException catch (e) {
+      } on ApiException catch (e) {
         if (!mounted) return;
         setState(() => _state = BindError(message: e.message));
       }
@@ -98,10 +99,10 @@ class _MerchantBindPageState extends State<MerchantBindPage> {
     setState(() => _state = const BindLoading());
 
     try {
-      await _repository.bindNfc(nfcUid: code, couponId: couponId);
+      await _repository.bindQrCode(qrUid: code, couponId: couponId);
       if (!mounted) return;
       setState(() => _state = BindSuccess(method: BindMethod.qr, code: code, couponId: couponId));
-    } on NfcApiException catch (e) {
+    } on ApiException catch (e) {
       if (!mounted) return;
       setState(() => _state = BindError(message: e.message));
     } catch (e) {
